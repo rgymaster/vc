@@ -1,3 +1,8 @@
+/*!
+ * vc.js v.1.0.17
+ * (c) 2018-2019 KovchugoAF
+ * Released under the MIT License.
+ */
 VC = {
     install: function(Vue, options){
 
@@ -53,8 +58,12 @@ VC = {
                         url = (details.url.split('//')[1]).split('/'),
                         data = localStorage.getItem(url[0]),
                         prm = url[1],
-                        result = data ? JSON.parse(data) : {},
+                        result = {},
+                        isArray;
+                    try{
+                        result = JSON.parse(data);
                         isArray = Array.isArray(result);
+                    } catch (e) {}
                     switch (details.method){
                         case 'INIT':
                             result = data ? result : _vc.storage[_vc.property];
@@ -67,7 +76,11 @@ VC = {
                             }
                             break;
                         case 'UPDATE':
-                            result[prm] = details.data;
+                            if(prm){
+                                result[prm] = details.data;
+                            } else {
+                                result = details.data;
+                            }
                             break;
                         case 'DELETE':
                             if(isArray){
@@ -123,11 +136,15 @@ VC = {
             },
 
             _afterExec: function (details) {
-                let _vc = details._vc;
-                if(_vc.afterExec){
-                    details.route = _vc.afterExec.route;
-                    details.data = _vc.afterExec.data;
-                    _route(details);
+                let task = details._vc.afterExec;
+                if(task){
+                    if(task.route){
+                        details.route = task.route;
+                        details.data = task.data;
+                        _route(details);
+                    } else if(task.fn){
+                        task.fn.apply(null, task.prm);
+                    }
                 }
             },
 
@@ -141,14 +158,19 @@ VC = {
 
             upLocal: function (details) {
                 this._beforeExec(details).then(this._execLocal).then(this._onGet).then(this._afterExec).catch(this._catch);
+            },
+
+            upSelf: function (details) {
+                this._beforeExec(details).then(this._onGet).catch(this._catch);
             }
 
         };
 
-        let vc = options.vc || [],
+        let vc = options.vc || [], vcMap = {},
             base, routes, track,
             view = {
                 content: 'none',
+                config: {},
                 modal: 'none'
             },
             modal = {};
@@ -157,7 +179,7 @@ VC = {
             if(!details.url){
                 _modal(details);
             } else {
-                let upPattern = (~details.url.indexOf('local://') ? 'upLocal' : 'upExternal');
+                let upPattern = (~details.url.indexOf('local://') ? 'upLocal' : (details.url === 'self' ? 'upSelf' : 'upExternal'));
                 details._vc.vm = this.$root;
                 Vue.vc[upPattern](details);
             }
@@ -220,7 +242,16 @@ VC = {
                     track && track(route);
                 }
                 routes.current = details.route;
-                view.content = route.vc;
+                if(view.content === route.vc){
+                    view.content = 'none';
+                    setTimeout(function () {
+                        view.content = route.vc;
+                        view.config = route.config;
+                    }, 0);
+                } else {
+                    view.content = route.vc;
+                    view.config = route.config;
+                }
             }
 
             function _parseRoutes(list, parent) {
@@ -254,6 +285,7 @@ VC = {
                     tmp.nav = prm.nav.name || prm.name;
                     tmp.ind = prm.nav.ind;
                 }
+                tmp.config = prm.config || {};
                 return tmp;
             }
 
@@ -301,7 +333,7 @@ VC = {
                         route = routes.list[routes.map[self.to]],
                         href = route.origin;
                     if(self.prm){
-                        href = _parsePath(href, JSON.parse(self.prm));
+                        href = _parsePath(href, self.prm);
                     }
                     return createElement('a', {
                         attrs: {
@@ -313,7 +345,7 @@ VC = {
                                 self.route({
                                     route: {
                                         name: self.to,
-                                        prm: self.prm ? JSON.parse(self.prm) : {}
+                                        prm: self.prm || {}
                                     },
                                     data: {}
                                 });
@@ -322,6 +354,7 @@ VC = {
                     }, this.$slots.default)
                 }
             });
+            vcMap['vc-link'] = true;
 
             window.addEventListener('popstate', function(e){
                 if(e.state){
@@ -350,20 +383,28 @@ VC = {
                 return createElement('div', {}, this.$slots.default)
             }
         });
+        vcMap['none'] = true;
 
         if(options.hasOwnProperty('url')){
             let prefix = options.url.prefix || '',
                 postfix = options.url.postfix || '';
             for(let i = 0; i < vc.length; i++){
-                Vue.component(vc[i], function(resolve, reject){
-                    Vue.vc._execExternal({method: 'GET', url: prefix + vc[i] + postfix}).then(Vue.vc._parseVC).then(resolve, reject);
-                });
+                if(!vcMap.hasOwnProperty(vc[i])){
+                    Vue.component(vc[i], function(resolve, reject){
+                        Vue.vc._execExternal({method: 'GET', url: prefix + vc[i] + postfix}).then(Vue.vc._parseVC).then(resolve, reject);
+                    });
+                    vcMap[vc[i]] = true;
+                }
             }
             if(options.hasOwnProperty('app')){
                 let app = options.app;
                 Vue.vc._execExternal({method: 'GET', url: prefix + app + postfix}).then(Vue.vc._parseVC).then(function (details){
                     new Vue(details).$mount(app);
                 });
+            } else if(options.hasOwnProperty('scope')){
+                new Vue({el: options.scope});
+            } else {
+                console.log('vc target undefined');
             }
         }
 
